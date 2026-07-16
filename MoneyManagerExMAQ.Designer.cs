@@ -1,6 +1,6 @@
 namespace MoneyManagerExMAQ
 {
-    partial class Form1
+    partial class MoneyManagerExMAQ
     {
         /// <summary>
         ///  Required designer variable.

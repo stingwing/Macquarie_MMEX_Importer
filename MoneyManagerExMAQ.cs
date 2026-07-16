@@ -1,13 +1,13 @@
 namespace MoneyManagerExMAQ
 {
-    public partial class Form1 : Form
+    public partial class MoneyManagerExMAQ : Form
     {
         private AppSettings _settings;
         private ImportService _importService;
         private readonly List<DetectedFile> _detectedFiles = new();
         private List<TransferPair> _transferPairs = new();
 
-        public Form1()
+        public MoneyManagerExMAQ()
         {
             InitializeComponent();
             _settings = AppSettings.Load();
