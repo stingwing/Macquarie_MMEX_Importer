@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="MoneyManagerExMAQ.csproj" />
+  <Project Path="MoneyManagerExMAQ.Tests/MoneyManagerExMAQ.Tests.csproj" />
 </Solution>

@@ -8,6 +8,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- MMEX-style coin (blue, with an orange "import" arrow) so it's distinguishable from MMEX itself. -->
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <!-- The test project lives in a subfolder; keep its sources out of the app build. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);MoneyManagerExMAQ.Tests\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
