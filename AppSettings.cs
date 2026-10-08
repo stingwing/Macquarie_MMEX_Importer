@@ -12,6 +12,11 @@ namespace MoneyManagerExMAQ
 
         // The ACCOUNTNAME in the MMEX database this bank account maps to (e.g. "MAC_Credit").
         public string? MmexAccountName { get; set; }
+
+        // For ING/CommBank files (which carry no account column), one or more comma-separated tokens that,
+        // when found in a transaction description, identify the file as this account — e.g. a card
+        // suffix "8299" or an "Orange Everyday" account number. Empty for Macquarie accounts.
+        public string? IngFingerprint { get; set; }
     }
 
     public class AppSettings
@@ -27,6 +32,15 @@ namespace MoneyManagerExMAQ
 
         // Where bank CSVs found in Downloads are archived after scanning.
         public string? ImportFolder { get; set; }
+
+        // Path to the alias file (raw description -> clean payee) used for ING imports.
+        public string? CategoryRecordsPath { get; set; }
+
+        // Comma-separated extra text that marks a bank row as a transfer between the user's own
+        // accounts — typically their own name as other banks print it ("timothy mollenha" also
+        // covers Macquarie's truncated "Timothy Mollenha"). Used for transfer pairing and for
+        // matching rows against existing MMEX transfers dated a few days apart.
+        public string? TransferMarkers { get; set; }
 
         private static string SettingsPath =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -60,6 +74,8 @@ namespace MoneyManagerExMAQ
             settings.MmbFilePath = ReadString(doc.RootElement, "MmbFilePath");
             settings.BackupFolder = ReadString(doc.RootElement, "BackupFolder");
             settings.ImportFolder = ReadString(doc.RootElement, "ImportFolder");
+            settings.CategoryRecordsPath = ReadString(doc.RootElement, "CategoryRecordsPath");
+            settings.TransferMarkers = ReadString(doc.RootElement, "TransferMarkers");
 
             if (doc.RootElement.TryGetProperty("Accounts", out var accountsProp) &&
                 accountsProp.ValueKind == JsonValueKind.Array)
@@ -81,7 +97,8 @@ namespace MoneyManagerExMAQ
                     {
                         Name = name,
                         BankAccountLabel = ReadString(item, "BankAccountLabel"),
-                        MmexAccountName = ReadString(item, "MmexAccountName")
+                        MmexAccountName = ReadString(item, "MmexAccountName"),
+                        IngFingerprint = ReadString(item, "IngFingerprint")
                     });
                 }
             }

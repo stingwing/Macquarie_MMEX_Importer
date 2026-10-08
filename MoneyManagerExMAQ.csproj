@@ -6,7 +6,14 @@
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- MMEX-style coin (blue, with an orange "import" arrow) so it's distinguishable from MMEX itself. -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Embedded too, so the window/taskbar icon gets every size (ApplicationIcon only brands the .exe). -->
+    <EmbeddedResource Include="Assets\app.ico" LogicalName="MoneyManagerExMAQ.app.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />

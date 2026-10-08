@@ -16,10 +16,13 @@ namespace MoneyManagerExMAQ
             txtMmbPath.Text = _settings.MmbFilePath ?? string.Empty;
             txtBackupFolder.Text = _settings.BackupFolder ?? string.Empty;
             txtImportFolder.Text = _settings.ImportFolder ?? string.Empty;
+            txtCategoryRecords.Text = _settings.CategoryRecordsPath ?? string.Empty;
+            txtTransferMarkers.Text = _settings.TransferMarkers ?? string.Empty;
 
             foreach (var account in _settings.Accounts)
             {
-                dgvAccounts.Rows.Add(account.Name, account.BankAccountLabel ?? string.Empty, account.MmexAccountName ?? string.Empty);
+                dgvAccounts.Rows.Add(account.Name, account.BankAccountLabel ?? string.Empty,
+                    account.MmexAccountName ?? string.Empty, account.IngFingerprint ?? string.Empty);
             }
         }
 
@@ -45,6 +48,24 @@ namespace MoneyManagerExMAQ
         private void btnBrowseImportFolder_Click(object sender, EventArgs e)
         {
             BrowseFolder(txtImportFolder, "Choose the folder scanned bank files are archived to");
+        }
+
+        private void btnBrowseCategoryRecords_Click(object sender, EventArgs e)
+        {
+            using var ofd = new OpenFileDialog
+            {
+                Filter = "CSV Files (*.csv)|*.csv|All Files (*.*)|*.*",
+                Title = "Select the ING alias file (raw description → clean payee)",
+                InitialDirectory = File.Exists(txtCategoryRecords.Text)
+                    ? Path.GetDirectoryName(txtCategoryRecords.Text)
+                    : string.Empty,
+                CheckFileExists = false
+            };
+
+            if (ofd.ShowDialog() == DialogResult.OK)
+            {
+                txtCategoryRecords.Text = ofd.FileName;
+            }
         }
 
         private static void BrowseFolder(TextBox target, string description)
@@ -125,11 +146,13 @@ namespace MoneyManagerExMAQ
 
                 var bankLabel = Convert.ToString(row.Cells["colBankLabel"].Value)?.Trim();
                 var mmexName = Convert.ToString(row.Cells["colMmexAccount"].Value)?.Trim();
+                var fingerprint = Convert.ToString(row.Cells["colIngFingerprint"].Value)?.Trim();
                 accounts.Add(new AccountInfo
                 {
                     Name = name,
                     BankAccountLabel = string.IsNullOrEmpty(bankLabel) ? null : bankLabel,
-                    MmexAccountName = string.IsNullOrEmpty(mmexName) ? null : mmexName
+                    MmexAccountName = string.IsNullOrEmpty(mmexName) ? null : mmexName,
+                    IngFingerprint = string.IsNullOrEmpty(fingerprint) ? null : fingerprint
                 });
             }
 
@@ -137,6 +160,8 @@ namespace MoneyManagerExMAQ
             _settings.MmbFilePath = NullIfEmpty(txtMmbPath.Text);
             _settings.BackupFolder = NullIfEmpty(txtBackupFolder.Text);
             _settings.ImportFolder = NullIfEmpty(txtImportFolder.Text);
+            _settings.CategoryRecordsPath = NullIfEmpty(txtCategoryRecords.Text);
+            _settings.TransferMarkers = NullIfEmpty(txtTransferMarkers.Text);
             _settings.Save();
 
             DialogResult = DialogResult.OK;

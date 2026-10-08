@@ -6,13 +6,55 @@ namespace MoneyManagerExMAQ
         private ImportService _importService;
         private readonly List<DetectedFile> _detectedFiles = new();
         private List<TransferPair> _transferPairs = new();
+        // Guards the files grid's change events while it is being repopulated programmatically.
+        private bool _suppressGridEvents;
 
         public MoneyManagerExMAQ()
         {
             InitializeComponent();
+            using (var iconStream = typeof(MoneyManagerExMAQ).Assembly.GetManifestResourceStream("MoneyManagerExMAQ.app.ico"))
+            {
+                if (iconStream != null)
+                {
+                    Icon = new Icon(iconStream);
+                }
+            }
+            // Files-grid rows are mapped to _detectedFiles by index, so the user must not re-sort them.
+            foreach (DataGridViewColumn column in dgvFiles.Columns)
+            {
+                column.SortMode = DataGridViewColumnSortMode.NotSortable;
+            }
             _settings = AppSettings.Load();
             _importService = new ImportService(_settings);
+            LoadMmexAccountNames();
             UpdateDbLabel();
+        }
+
+        // Fills the MMEX Account dropdown column from the configured database so label-less ING
+        // files can be assigned to an account by hand. Falls back to just a blank entry if the
+        // database can't be read.
+        private void LoadMmexAccountNames()
+        {
+            var names = new List<string>();
+            if (!string.IsNullOrEmpty(_settings.MmbFilePath) && File.Exists(_settings.MmbFilePath))
+            {
+                try
+                {
+                    using var db = MmexDatabase.Open(_settings.MmbFilePath, readOnly: true);
+                    names = db.GetAccountNames();
+                }
+                catch
+                {
+                    // Leave the list empty; the dropdown will still offer the blank entry.
+                }
+            }
+
+            colMmexAccount.Items.Clear();
+            colMmexAccount.Items.Add(string.Empty);
+            foreach (var name in names)
+            {
+                colMmexAccount.Items.Add(name);
+            }
         }
 
         private void UpdateDbLabel()
@@ -28,7 +70,44 @@ namespace MoneyManagerExMAQ
             if (settingsForm.ShowDialog() == DialogResult.OK)
             {
                 _importService = new ImportService(_settings);
+                LoadMmexAccountNames();
                 UpdateDbLabel();
+                // Loaded files were analyzed under the old settings (fingerprints, transfer text,
+                // database) — redo them so the grid and any later write use the new ones.
+                ReanalyzeUnwritten();
+            }
+        }
+
+        // Re-runs Analyze for every loaded file not yet written, keeping manual account picks, then
+        // refreshes transfer pairs and the grid. A file that can no longer be read (moved/deleted)
+        // keeps its previous analysis and is reported.
+        private void ReanalyzeUnwritten()
+        {
+            var failures = new List<string>();
+            for (int i = 0; i < _detectedFiles.Count; i++)
+            {
+                var file = _detectedFiles[i];
+                if (file.Written)
+                {
+                    continue;
+                }
+                try
+                {
+                    _detectedFiles[i] = _importService.Analyze(file.FilePath, file.AccountOverride);
+                }
+                catch (Exception ex)
+                {
+                    failures.Add($"{file.FileName}: {ex.Message}");
+                }
+            }
+
+            _transferPairs = _importService.FindTransferPairs(_detectedFiles);
+            RefreshFilesGrid();
+
+            if (failures.Count > 0)
+            {
+                MessageBox.Show($"Could not re-check:\n\n{string.Join("\n", failures)}", "Re-analysis",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
@@ -88,7 +167,7 @@ namespace MoneyManagerExMAQ
                 {
                     _detectedFiles.Add(detected);
                 }
-                _transferPairs = ImportService.FindTransferPairs(_detectedFiles);
+                _transferPairs = _importService.FindTransferPairs(_detectedFiles);
                 RefreshFilesGrid();
             }
             catch (Exception ex)
@@ -101,21 +180,41 @@ namespace MoneyManagerExMAQ
         {
             var selectedPath = SelectedFile()?.FilePath;
 
-            dgvFiles.Rows.Clear();
-            foreach (var file in _detectedFiles)
+            _suppressGridEvents = true;
+            try
             {
-                var pairedCount = _transferPairs.Count(p => p.DebitFile == file || p.CreditFile == file);
-                var status = file.Written
-                    ? "Written to MMEX"
-                    : !file.IsMapped
-                        ? "No account mapping"
-                        : file.NewTransactions.Count == 0
-                            ? "Up to date"
-                            : pairedCount > 0
-                                ? $"{file.NewTransactions.Count} new ({pairedCount} in transfers)"
-                                : $"{file.NewTransactions.Count} new";
-                dgvFiles.Rows.Add(file.FileName, file.AccountLabel, file.MmexAccountName ?? "—", file.TotalRows,
-                    file.NewTransactions.Count, file.Issues.Count, status);
+                dgvFiles.Rows.Clear();
+                foreach (var file in _detectedFiles)
+                {
+                    var pairedCount = _transferPairs.Count(p => p.DebitFile == file || p.CreditFile == file);
+                    var status = file.Written
+                        ? "Written to MMEX"
+                        : file.Format == BankFileFormat.Unknown
+                            ? "Unrecognised file format"
+                        : !file.IsMapped
+                            ? BankCsv.HasAccountColumn(file.Format) ? "No account mapping" : "Pick an account →"
+                            : file.NewTransactions.Count == 0
+                                ? "Up to date"
+                                : pairedCount > 0
+                                    ? $"{file.NewTransactions.Count} new ({pairedCount} in transfers)"
+                                    : $"{file.NewTransactions.Count} new";
+
+                    // The combo cell value must be one of the column's items or it raises DataError.
+                    var account = file.MmexAccountName ?? string.Empty;
+                    if (account.Length > 0 && !colMmexAccount.Items.Contains(account))
+                    {
+                        colMmexAccount.Items.Add(account);
+                    }
+
+                    var rowIndex = dgvFiles.Rows.Add(file.FileName, file.AccountLabel, account, file.TotalRows,
+                        file.NewTransactions.Count, file.Issues.Count, status);
+                    // Assigning an account is only meaningful before the file is written.
+                    dgvFiles.Rows[rowIndex].Cells[colMmexAccount.Index].ReadOnly = file.Written;
+                }
+            }
+            finally
+            {
+                _suppressGridEvents = false;
             }
 
             if (selectedPath != null)
@@ -143,6 +242,77 @@ namespace MoneyManagerExMAQ
         private void dgvFiles_SelectionChanged(object sender, EventArgs e)
         {
             RefreshTransactionsGrid();
+        }
+
+        // Commit a dropdown change as soon as the user picks a value (rather than on cell leave)
+        // so re-analysis happens immediately.
+        private void dgvFiles_CurrentCellDirtyStateChanged(object sender, EventArgs e)
+        {
+            if (dgvFiles.IsCurrentCellDirty && dgvFiles.CurrentCell is DataGridViewComboBoxCell)
+            {
+                dgvFiles.CommitEdit(DataGridViewDataErrorContexts.Commit);
+            }
+        }
+
+        private void dgvFiles_CellValueChanged(object sender, DataGridViewCellEventArgs e)
+        {
+            if (_suppressGridEvents || e.ColumnIndex != colMmexAccount.Index ||
+                e.RowIndex < 0 || e.RowIndex >= _detectedFiles.Count)
+            {
+                return;
+            }
+
+            var file = _detectedFiles[e.RowIndex];
+            var chosen = Convert.ToString(dgvFiles.Rows[e.RowIndex].Cells[colMmexAccount.Index].Value)?.Trim() ?? string.Empty;
+            if (string.Equals(chosen, file.MmexAccountName ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            // Deferred: this event fires mid-commit while the combo is still editing, and
+            // AssignAccount rebuilds the grid (Rows.Clear), which WinForms rejects as reentrant.
+            BeginInvoke(() => AssignAccount(file, chosen));
+        }
+
+        // Swallow the transient "value is not valid" errors a combo column raises while its cell
+        // value and item list are being reconciled; RefreshFilesGrid keeps them consistent.
+        // Anything else is a real problem, so show it rather than dropping it silently.
+        private void dgvFiles_DataError(object sender, DataGridViewDataErrorEventArgs e)
+        {
+            e.ThrowException = false;
+            var transient = e.ColumnIndex == colMmexAccount.Index &&
+                            (e.Context & (DataGridViewDataErrorContexts.Formatting | DataGridViewDataErrorContexts.Display)) != 0;
+            if (!transient)
+            {
+                MessageBox.Show($"Files grid error ({e.Context}): {e.Exception?.Message}", "Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        // Re-analyzes a file against a manually chosen MMEX account (empty reverts to auto-detect).
+        private void AssignAccount(DetectedFile file, string mmexAccountName)
+        {
+            if (file.Written)
+            {
+                return;
+            }
+
+            try
+            {
+                var reanalyzed = _importService.Analyze(file.FilePath,
+                    string.IsNullOrEmpty(mmexAccountName) ? null : mmexAccountName);
+                var index = _detectedFiles.IndexOf(file);
+                if (index >= 0)
+                {
+                    _detectedFiles[index] = reanalyzed;
+                }
+                _transferPairs = _importService.FindTransferPairs(_detectedFiles);
+                RefreshFilesGrid();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not assign account: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         private void RefreshTransactionsGrid()
@@ -257,14 +427,11 @@ namespace MoneyManagerExMAQ
                 {
                     results.Add($"New payees created: {summary.PayeesCreated}");
                 }
-                if (summary.CategoriesCreated > 0)
-                {
-                    results.Add($"New categories created: {summary.CategoriesCreated}");
-                }
                 results.Add($"Backup: {backupPath}");
 
-                _transferPairs = ImportService.FindTransferPairs(_detectedFiles);
-                RefreshFilesGrid();
+                // Rows just written may also appear in other loaded files (overlapping downloads,
+                // the other side of a transfer), so re-check those against the updated database.
+                ReanalyzeUnwritten();
                 MessageBox.Show(string.Join("\n", results), "Write Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
